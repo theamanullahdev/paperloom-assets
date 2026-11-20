@@ -1,0 +1,59 @@
+name: Library
+
+# Checks every change to the library with the app's own validator and, on the
+# default branch, rebuilds each folder's preview.png and the index.json files
+# (the checksums the app verifies before it installs anything) and commits them.
+#
+# The app's source is checked out only to use its renderer and theme checker
+# (plain Rust, no libmpv needed).
+on:
+  push:
+    branches: [main]
+    paths: ['widgets/**', 'themes/**', 'scripts/**', '.github/workflows/library.yml']
+  pull_request:
+    paths: ['widgets/**', 'themes/**', 'scripts/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: library-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: theamanullahdev/paperloom
+          path: app
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+      - name: Check and rebuild
+        env:
+          PAPERLOOM_APP: ${{ github.workspace }}/app
+        run: |
+          python3 scripts/build-themes-index.py
+          python3 scripts/build-widgets-index.py --previews
+      - name: Pull request without the rebuilt files
+        if: github.event_name == 'pull_request'
+        run: |
+          git status --short
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::notice::index.json / preview.png differ from what the build makes; they are rebuilt automatically after the merge."
+          fi
+      - name: Commit the rebuilt files
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "paperloom-assets"
+            git config user.email "noreply@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: rebuild previews and indexes [skip ci]"
+            git push
+          fi
